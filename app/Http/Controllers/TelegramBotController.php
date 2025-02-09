@@ -115,32 +115,32 @@ class TelegramBotController extends Controller
         return true;
     }
 
- private function askToJoinChannels($chat_id, $language)
-{
-    $channels = $this->requiredChannels[$language] ?? $this->requiredChannels['ru']; // Standart ruscha
+    private function askToJoinChannels($chat_id, $language)
+    {
+        $channels = $this->requiredChannels[$language] ?? $this->requiredChannels['ru']; // Standart ruscha
 
-    $buttons = [];
-    foreach ($channels as $channel) {
-        $buttons[] = Button::make([
-            'text' => "➕ " . $channel['name'],
-            'url' => "https://t.me/" . ltrim($channel['username'], '@'),
+        $buttons = [];
+        foreach ($channels as $channel) {
+            $buttons[] = Button::make([
+                'text' => "➕ " . $channel['name'],
+                'url' => "https://t.me/" . ltrim($channel['username'], '@'),
+            ]);
+        }
+
+        $keyboard = Keyboard::make()->inline()->row($buttons);
+
+        $messages = [
+            'ru' => "Чтобы использовать бот, подпишитесь на следующие каналы 👇",
+            'tj' => "Барои истифодаи бот, ба каналҳои зерин обуна шавед 👇",
+            'uz' => "Botdan foydalanish uchun quyidagi kanallarga qo‘shiling 👇",
+        ];
+
+        $this->telegram->sendMessage([
+            'chat_id' => $chat_id,
+            'text' => $messages[$language] ?? $messages['ru'],
+            'reply_markup' => $keyboard,
         ]);
     }
-
-    $keyboard = Keyboard::make()->inline()->row($buttons);
-
-    $messages = [
-        'ru' => "Чтобы использовать бот, подпишитесь на следующие каналы 👇",
-        'tj' => "Барои истифодаи бот, ба каналҳои зерин обуна шавед 👇",
-        'uz' => "Botdan foydalanish uchun quyidagi kanallarga qo‘shiling 👇",
-    ];
-
-    $this->telegram->sendMessage([
-        'chat_id' => $chat_id,
-        'text' => $messages[$language] ?? $messages['ru'],
-        'reply_markup' => $keyboard,
-    ]);
-}
 
 
     // 📌 4-chi bosqich: Kino ro‘yxatini chiqarish
