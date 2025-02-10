@@ -94,17 +94,19 @@ class TelegramBotController extends Controller
         return $this->showMoviesList($chat_id, $language);
     }
 
-    // 📌 Kanal a'zo bo‘lishni tekshirish
     private function checkUserSubscribed($chat_id)
     {
-        foreach ($this->requiredChannels as $channel) {
+        $language = session()->get("user_lang_$chat_id", 'ru');
+        $channels = $this->requiredChannels[$language] ?? $this->requiredChannels['ru'];
+
+        foreach ($channels as $channel) {
             try {
                 $chatMember = $this->telegram->getChatMember([
                     'chat_id' => $channel['username'],
                     'user_id' => $chat_id,
                 ]);
 
-                if (!isset($chatMember->status) || !in_array($chatMember->status, ['member', 'administrator', 'creator'])) {
+                if (!isset($chatMember['status']) || !in_array($chatMember['status'], ['member', 'administrator', 'creator'])) {
                     return false;
                 }
             } catch (\Exception $e) {
@@ -112,34 +114,56 @@ class TelegramBotController extends Controller
                 return false;
             }
         }
+
         return true;
     }
 
     private function askToJoinChannels($chat_id, $language)
-    {
-        $channels = $this->requiredChannels[$language] ?? $this->requiredChannels['ru']; // Standart ruscha
+{
+    $channels = $this->requiredChannels[$language] ?? $this->requiredChannels['ru'];
 
-        $buttons = [];
-        foreach ($channels as $channel) {
-            $buttons[] = Button::make([
+    $keyboard = Keyboard::make()->inline();
+
+    foreach ($channels as $channel) {
+        $keyboard->row([ // ⬅️ BU YERDA MASSIV BO‘LISHI KERAK
+            Button::make([
                 'text' => "➕ " . $channel['name'],
                 'url' => "https://t.me/" . ltrim($channel['username'], '@'),
-            ]);
-        }
-
-        $keyboard = Keyboard::make()->inline()->row($buttons);
-
-        $messages = [
-            'ru' => "Чтобы использовать бот, подпишитесь на следующие каналы 👇",
-            'tj' => "Барои истифодаи бот, ба каналҳои зерин обуна шавед 👇",
-            'uz' => "Botdan foydalanish uchun quyidagi kanallarga qo‘shiling 👇",
-        ];
-
-        $this->telegram->sendMessage([
-            'chat_id' => $chat_id,
-            'text' => $messages[$language] ?? $messages['ru'],
-            'reply_markup' => $keyboard,
+            ])
         ]);
+    }
+
+    // ✅ "Tasdiqlash" tugmasi qo'shildi (MASSIV KO‘RINISHIDA)
+    $keyboard->row([
+        Button::make([
+            'text' => '✅ Tasdiqlash',
+            'callback_data' => 'check_subscription',
+        ])
+    ]);
+
+    $messages = [
+        'ru' => "Чтобы использовать бот, подпишитесь на следующие каналы 👇",
+        'tj' => "Барои истифодаи бот, ба каналҳои зерин обуна шавед 👇",
+        'uz' => "Botdan foydalanish uchun quyidagi kanallarga qo‘shiling 👇",
+    ];
+
+    $this->telegram->sendMessage([
+        'chat_id' => $chat_id,
+        'text' => $messages[$language] ?? $messages['ru'],
+        'reply_markup' => $keyboard,
+    ]);
+}
+
+
+    private function checkSubscriptionStatus($chat_id)
+    {
+        $language = session()->get("user_lang_$chat_id", 'ru');
+
+        if ($this->checkUserSubscribed($chat_id)) {
+            return $this->showMoviesList($chat_id, $language);
+        } else {
+            return $this->askToJoinChannels($chat_id, $language);
+        }
     }
 
 
