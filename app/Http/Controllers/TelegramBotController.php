@@ -12,26 +12,24 @@ class TelegramBotController extends Controller
     protected $telegram;
     protected $requiredChannels = [
         'uz' => [
-            ['name' => 'O‘zbek Filmlar', 'username' => '@mirkomil_kuhistoniy_blog'],
-            ['name' => 'Premyera Kinolar', 'username' => '@mirkomil_kuhistoniy_blog'],
+            ['name' => 'O‘zbek Filmlar', 'username' => '@barnomahoyi_tojiki'],
+            ['name' => 'Premyera Kinolar', 'username' => '@barnomahoyi_tojiki'],
         ],
         'ru' => [
-            ['name' => 'Русские фильмы', 'username' => '@mirkomil_kuhistoniy_blog'],
-            ['name' => 'Премьера кино', 'username' => '@mirkomil_kuhistoniy_blog'],
+            ['name' => 'Русские фильмы', 'username' => '@barnomahoyi_tojiki'],
+            ['name' => 'Премьера кино', 'username' => '@barnomahoyi_tojiki'],
         ],
         'tj' => [
-            ['name' => 'Тоҷик Филмҳо', 'username' => '@mirkomil_kuhistoniy_blog'],
-            ['name' => 'Нав Кино', 'username' => '@mirkomil_kuhistoniy_blog'],
+            ['name' => 'Тоҷик Филмҳо', 'username' => '@barnomahoyi_tojiki'],
+            ['name' => 'Нав Кино', 'username' => '@barnomahoyi_tojiki'],
         ],
     ];
-
 
     public function __construct()
     {
         $this->telegram = new Api(env('TELEGRAM_BOT_TOKEN'));
     }
 
-    // 📌 Telegram webhookni qabul qilish
     public function handleWebhook()
     {
         $update = $this->telegram->getWebhookUpdate();
@@ -44,10 +42,6 @@ class TelegramBotController extends Controller
             if ($text === '/start') {
                 return $this->sendLanguageSelection($chat_id);
             }
-
-            if (strpos($text, 'kino_') === 0) {
-                return $this->sendMovieLink($chat_id, $text);
-            }
         }
 
         if ($update->isType('callback_query')) {
@@ -57,13 +51,14 @@ class TelegramBotController extends Controller
 
             if (strpos($data, 'lang_') === 0) {
                 return $this->setUserLanguage($chat_id, str_replace('lang_', '', $data));
+            } elseif ($data === 'check_subscription') {
+                return $this->checkSubscriptionStatus($chat_id);
             }
         }
 
         return response()->json(['status' => 'no update']);
     }
 
-    // 📌 1-chi bosqich: Til tanlash menyusi
     private function sendLanguageSelection($chat_id)
     {
         $keyboard = Keyboard::make()->inline()
@@ -80,17 +75,14 @@ class TelegramBotController extends Controller
         ]);
     }
 
-    // 📌 2-chi bosqich: Foydalanuvchi tilni tanlagandan keyin
     private function setUserLanguage($chat_id, $language)
     {
         session()->put("user_lang_$chat_id", $language);
 
-        // ✅ Kanalga qo‘shilganligini tekshirish
         if (!$this->checkUserSubscribed($chat_id)) {
             return $this->askToJoinChannels($chat_id, $language);
         }
 
-        // ✅ Kino ro‘yxatini ko‘rsatish
         return $this->showMoviesList($chat_id, $language);
     }
 
@@ -119,41 +111,38 @@ class TelegramBotController extends Controller
     }
 
     private function askToJoinChannels($chat_id, $language)
-{
-    $channels = $this->requiredChannels[$language] ?? $this->requiredChannels['ru'];
+    {
+        $channels = $this->requiredChannels[$language] ?? $this->requiredChannels['ru'];
+        $keyboard = Keyboard::make()->inline();
 
-    $keyboard = Keyboard::make()->inline();
+        foreach ($channels as $channel) {
+            $keyboard->row([
+                Button::make([
+                    'text' => "➕ " . $channel['name'],
+                    'url' => "https://t.me/" . ltrim($channel['username'], '@'),
+                ])
+            ]);
+        }
 
-    foreach ($channels as $channel) {
-        $keyboard->row([ // ⬅️ BU YERDA MASSIV BO‘LISHI KERAK
+        $keyboard->row([
             Button::make([
-                'text' => "➕ " . $channel['name'],
-                'url' => "https://t.me/" . ltrim($channel['username'], '@'),
+                'text' => '✅ Tasdiqlash',
+                'callback_data' => 'check_subscription',
             ])
         ]);
+
+        $messages = [
+            'ru' => "Чтобы использовать бот, подпишитесь на следующие каналы 👇",
+            'tj' => "Барои истифодаи бот, ба каналҳои зерин обуна шавед 👇",
+            'uz' => "Botdan foydalanish uchun quyidagi kanallarga qo‘shiling 👇",
+        ];
+
+        $this->telegram->sendMessage([
+            'chat_id' => $chat_id,
+            'text' => $messages[$language] ?? $messages['ru'],
+            'reply_markup' => $keyboard,
+        ]);
     }
-
-    // ✅ "Tasdiqlash" tugmasi qo'shildi (MASSIV KO‘RINISHIDA)
-    $keyboard->row([
-        Button::make([
-            'text' => '✅ Tasdiqlash',
-            'callback_data' => 'check_subscription',
-        ])
-    ]);
-
-    $messages = [
-        'ru' => "Чтобы использовать бот, подпишитесь на следующие каналы 👇",
-        'tj' => "Барои истифодаи бот, ба каналҳои зерин обуна шавед 👇",
-        'uz' => "Botdan foydalanish uchun quyidagi kanallarga qo‘shiling 👇",
-    ];
-
-    $this->telegram->sendMessage([
-        'chat_id' => $chat_id,
-        'text' => $messages[$language] ?? $messages['ru'],
-        'reply_markup' => $keyboard,
-    ]);
-}
-
 
     private function checkSubscriptionStatus($chat_id)
     {
@@ -166,49 +155,22 @@ class TelegramBotController extends Controller
         }
     }
 
-
-    // 📌 4-chi bosqich: Kino ro‘yxatini chiqarish
-    private function showMoviesList($chat_id, $language)
-    {
-        $movies = [
-            'uz' => ['kino_101' => '🔹 O‘zbek Kino 1', 'kino_102' => '🔹 O‘zbek Kino 2'],
-            'ru' => ['kino_201' => '🔹 Русский Фильм 1', 'kino_202' => '🔹 Русский Фильм 2'],
-            'tj' => ['kino_301' => '🔹 Тоҷикӣ Филм 1', 'kino_302' => '🔹 Тоҷикӣ Филм 2'],
-        ];
-
-        $keyboard = Keyboard::make()->inline();
-        foreach ($movies[$language] as $code => $name) {
-            $keyboard->row([Button::make(['text' => $name, 'callback_data' => $code])]);
-        }
-
-        $messages = [
-            'ru' => "Выберите фильм:",
-            'tj' => "Филмро интихоб кунед:",
-            'uz' => "Quyidagi filmlardan birini tanlang:",
-        ];
-
-        $this->telegram->sendMessage([
-            'chat_id' => $chat_id,
-            'text' => $messages[$language] ?? $messages['ru'],
-            'reply_markup' => $keyboard,
-        ]);
-    }
-
-    // 📌 Kino havolani yuborish
     private function sendMovieLink($chat_id, $movie_code)
     {
-        $movie_links = [
-            'kino_101' => 'https://example.com/uzbek-movie-1',
-            'kino_102' => 'https://example.com/uzbek-movie-2',
-            'kino_201' => 'https://example.com/russian-movie-1',
-            'kino_202' => 'https://example.com/russian-movie-2',
-            'kino_301' => 'https://example.com/tajik-movie-1',
-            'kino_302' => 'https://example.com/tajik-movie-2',
-        ];
+        $movie = \App\Models\Movie::where('code', $movie_code)->first();
 
-        $this->telegram->sendMessage([
-            'chat_id' => $chat_id,
-            'text' => $movie_links[$movie_code] ?? "❌ Такого фильма нет!",
-        ]);
+        if ($movie) {
+            $this->telegram->sendMessage([
+                'chat_id' => $chat_id,
+                'text' => "🎬 *{$movie->title}* \n📽 Havola: [Tomosha qilish]({$movie->link})",
+                'parse_mode' => 'Markdown',
+            ]);
+        } else {
+            $this->telegram->sendMessage([
+                'chat_id' => $chat_id,
+                'text' => "❌ Bunday kodga mos kino topilmadi!",
+            ]);
+        }
     }
+
 }
