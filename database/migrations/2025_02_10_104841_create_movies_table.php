@@ -13,8 +13,10 @@ return new class extends Migration {
         Schema::create('movies', function (Blueprint $table) {
             $table->id();
             $table->string('code')->unique(); // Masalan: kino_101
-            $table->string('title'); // Kino nomi
-            $table->text('link'); // Kino havolasi
+            $table->text('file_name'); // Kino havolasi
+            $table->text('file_id'); // Kino havolasi
+            $table->text('file_size'); // Kino havolasi
+            $table->text('mime_type'); // Kino havolasi
             $table->timestamps();
         });
     }

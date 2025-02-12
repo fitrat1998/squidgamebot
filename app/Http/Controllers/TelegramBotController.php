@@ -5,7 +5,8 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Telegram\Bot\Api;
 use Telegram\Bot\Keyboard\Keyboard;
-use Telegram\Bot\Keyboard\Button;
+use App\Models\Movie;
+use Illuminate\Support\Facades\Cache;
 
 class TelegramBotController extends Controller
 {
@@ -42,6 +43,11 @@ class TelegramBotController extends Controller
             if ($text === '/start') {
                 return $this->sendLanguageSelection($chat_id);
             }
+
+            if (Cache::has("waiting_for_movie_code_$chat_id")) {
+                Cache::forget("waiting_for_movie_code_$chat_id");
+                return $this->sendMovieByCode($chat_id, $text);
+            }
         }
 
         if ($update->isType('callback_query')) {
@@ -51,8 +57,12 @@ class TelegramBotController extends Controller
 
             if (strpos($data, 'lang_') === 0) {
                 return $this->setUserLanguage($chat_id, str_replace('lang_', '', $data));
-            } elseif ($data === 'check_subscription') {
-                return $this->checkSubscriptionStatus($chat_id);
+            } elseif ($data === 'search_movie') {
+                return $this->askForMovieCode($chat_id);
+            } elseif ($data === 'list_movies') {
+                return $this->showMoviesList($chat_id);
+            } elseif (strpos($data, 'movie_') === 0) {
+                return $this->sendMovieByCode($chat_id, str_replace('movie_', '', $data));
             }
         }
 
@@ -63,9 +73,9 @@ class TelegramBotController extends Controller
     {
         $keyboard = Keyboard::make()->inline()
             ->row([
-                Button::make(['text' => '🇷🇺 Русский', 'callback_data' => 'lang_ru']),
-                Button::make(['text' => '🇹🇯 Тоҷикӣ', 'callback_data' => 'lang_tj']),
-                Button::make(['text' => '🇺🇿 O‘zbek', 'callback_data' => 'lang_uz']),
+                Keyboard::button(['text' => '🇷🇺 Русский', 'callback_data' => 'lang_ru']),
+                Keyboard::button(['text' => '🇹🇯 Тоҷикӣ', 'callback_data' => 'lang_tj']),
+                Keyboard::button(['text' => '🇺🇿 O‘zbek', 'callback_data' => 'lang_uz']),
             ]);
 
         $this->telegram->sendMessage([
@@ -77,18 +87,50 @@ class TelegramBotController extends Controller
 
     private function setUserLanguage($chat_id, $language)
     {
-        session()->put("user_lang_$chat_id", $language);
+        Cache::put("user_lang_$chat_id", $language, 3600); // Foydalanuvchi tilini keshga saqlash
 
         if (!$this->checkUserSubscribed($chat_id)) {
             return $this->askToJoinChannels($chat_id, $language);
         }
 
-        return $this->showMoviesList($chat_id, $language);
+        return $this->showMainMenu($chat_id, $language);
+    }
+
+
+    private function askToJoinChannels($chat_id, $language)
+    {
+        $channels = $this->requiredChannels[$language] ?? $this->requiredChannels['ru'];
+
+        $messages = [
+            'uz' => "📢 Botdan foydalanish uchun quyidagi kanallarga a'zo bo‘ling:\n\n",
+            'ru' => "📢 Чтобы использовать бот, подпишитесь на следующие каналы:\n\n",
+            'tj' => "📢 Барои истифодаи бот, ба каналҳои зерин ҳамроҳ шавед:\n\n",
+        ];
+
+        $text = $messages[$language] ?? $messages['ru']; // Default rus tiliga
+
+        foreach ($channels as $channel) {
+            $text .= "➡️ [{$channel['name']}]({$channel['username']})\n";
+        }
+
+        $footerMessages = [
+            'uz' => "\n✅ A'zo bo‘lgach, /start buyrug‘ini qayta yuboring.",
+            'ru' => "\n✅ После подписки отправьте команду /start.",
+            'tj' => "\n✅ Баъди ҳамроҳ шудан, фармони /start-ро ирсол кунед.",
+        ];
+
+        $text .= $footerMessages[$language] ?? $footerMessages['ru'];
+
+        $this->telegram->sendMessage([
+            'chat_id' => $chat_id,
+            'text' => $text,
+            'parse_mode' => 'Markdown',
+        ]);
     }
 
     private function checkUserSubscribed($chat_id)
     {
-        $language = session()->get("user_lang_$chat_id", 'ru');
+        $language = Cache::get("user_lang_$chat_id", 'ru'); // Foydalanuvchi tilini olish
         $channels = $this->requiredChannels[$language] ?? $this->requiredChannels['ru'];
 
         foreach ($channels as $channel) {
@@ -99,78 +141,78 @@ class TelegramBotController extends Controller
                 ]);
 
                 if (!isset($chatMember['status']) || !in_array($chatMember['status'], ['member', 'administrator', 'creator'])) {
-                    return false;
+                    return false; // Agar foydalanuvchi a'zo bo‘lmasa
                 }
             } catch (\Exception $e) {
                 \Log::error("Telegram API error: " . $e->getMessage());
-                return false;
+                return false; // Xatolik bo‘lsa ham, foydalanuvchini a’zo emas deb qabul qilamiz
             }
         }
 
-        return true;
+        return true; // Agar barcha kanallarga a'zo bo‘lsa
     }
 
-    private function askToJoinChannels($chat_id, $language)
-    {
-        $channels = $this->requiredChannels[$language] ?? $this->requiredChannels['ru'];
-        $keyboard = Keyboard::make()->inline();
 
-        foreach ($channels as $channel) {
-            $keyboard->row([
-                Button::make([
-                    'text' => "➕ " . $channel['name'],
-                    'url' => "https://t.me/" . ltrim($channel['username'], '@'),
-                ])
-            ]);
+    private function askForMovieCode($chat_id)
+    {
+        // Foydalanuvchi allaqachon kutayotgan bo‘lsa, qayta yuborilmasligi kerak
+        if (Cache::has("waiting_for_movie_code_$chat_id")) {
+            return;
         }
 
-        $keyboard->row([
-            Button::make([
-                'text' => '✅ Tasdiqlash',
-                'callback_data' => 'check_subscription',
-            ])
-        ]);
-
-        $messages = [
-            'ru' => "Чтобы использовать бот, подпишитесь на следующие каналы 👇",
-            'tj' => "Барои истифодаи бот, ба каналҳои зерин обуна шавед 👇",
-            'uz' => "Botdan foydalanish uchun quyidagi kanallarga qo‘shiling 👇",
-        ];
+        Cache::put("waiting_for_movie_code_$chat_id", true, 600);
 
         $this->telegram->sendMessage([
             'chat_id' => $chat_id,
-            'text' => $messages[$language] ?? $messages['ru'],
-            'reply_markup' => $keyboard,
+            'text' => "🎬 Kino kodini kiriting:",
         ]);
     }
 
-    private function checkSubscriptionStatus($chat_id)
+    private function sendMovieByCode($chat_id, $code)
     {
-        $language = session()->get("user_lang_$chat_id", 'ru');
+        $movie = Movie::where('code', $code)->first();
 
-        if ($this->checkUserSubscribed($chat_id)) {
-            return $this->showMoviesList($chat_id, $language);
-        } else {
-            return $this->askToJoinChannels($chat_id, $language);
-        }
-    }
-
-    private function sendMovieLink($chat_id, $movie_code)
-    {
-        $movie = \App\Models\Movie::where('code', $movie_code)->first();
-
-        if ($movie) {
-            $this->telegram->sendMessage([
-                'chat_id' => $chat_id,
-                'text' => "🎬 *{$movie->title}* \n📽 Havola: [Tomosha qilish]({$movie->link})",
-                'parse_mode' => 'Markdown',
-            ]);
-        } else {
+        if (!$movie) {
             $this->telegram->sendMessage([
                 'chat_id' => $chat_id,
                 'text' => "❌ Bunday kodga mos kino topilmadi!",
             ]);
+            return;
         }
+
+        $this->telegram->sendVideo([
+            'chat_id' => $chat_id,
+            'video' => $movie->file_id,
+            'caption' => "🎬 *{$movie->file_name}*",
+            'parse_mode' => 'Markdown',
+        ]);
     }
 
+    private function showMoviesList($chat_id)
+    {
+        $movies = Movie::all();
+        if ($movies->isEmpty()) {
+            $this->telegram->sendMessage([
+                'chat_id' => $chat_id,
+                'text' => "📂 Hozircha kinolar mavjud emas.",
+            ]);
+            return;
+        }
+
+        $keyboard = Keyboard::make()->inline();
+        foreach ($movies as $movie) {
+            $keyboard->row([
+                Keyboard::button([
+                    'text' => "🎬 " . $movie->file_name,
+                    'callback_data' => "movie_{$movie->code}",
+                ])
+            ]);
+        }
+
+        $this->telegram->sendMessage([
+            'chat_id' => $chat_id,
+            'text' => "🎞 Kinolar ro‘yxati:",
+            'reply_markup' => $keyboard,
+        ]);
+    }
 }
